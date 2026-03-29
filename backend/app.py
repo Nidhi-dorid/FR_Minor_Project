@@ -11,7 +11,10 @@ import os
 from flask import send_from_directory
 
 # Initialize Flask app
-app = Flask(__name__, static_folder='frontend/dist', static_url_path='')
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../frontend/dist'))
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../frontend/dist'))
+
+app = Flask(__name__, static_folder=static_dir, static_url_path='')
 app.secret_key = "your_secret_key"
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
@@ -32,38 +35,56 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Load and train model
-df = pd.read_csv("Fertilizer Prediction.csv")
-X = df.drop('Fertilizer_Name', axis=1)
-y = df['Fertilizer_Name']
+# Load and train model if not exists
+MODEL_FILE = 'fertilizer_model.pkl'
+ENCODER_FILE = 'encoder.pkl'
+CATEGORICAL_COLS_FILE = 'categorical_cols.pkl'
+MODEL_COLUMNS_FILE = 'model_columns.pkl'
 
-categorical_cols = X.select_dtypes(include='object').columns
-encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-X_encoded = pd.DataFrame(encoder.fit_transform(X[categorical_cols]))
-X_encoded.columns = encoder.get_feature_names_out(categorical_cols)
-X_final = pd.concat([X_encoded, X.drop(columns=categorical_cols).reset_index(drop=True)], axis=1)
+def train_model():
+    print("Training model...")
+    csv_path = os.path.join(os.path.dirname(__file__), "Fertilizer Prediction.csv")
+    df = pd.read_csv(csv_path)
+    X = df.drop('Fertilizer_Name', axis=1)
+    y = df['Fertilizer_Name']
 
-model = RandomForestClassifier()
-model.fit(X_final, y)
+    categorical_cols = X.select_dtypes(include='object').columns
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+    X_encoded = pd.DataFrame(encoder.fit_transform(X[categorical_cols]))
+    X_encoded.columns = encoder.get_feature_names_out(categorical_cols)
+    X_final = pd.concat([X_encoded, X.drop(columns=categorical_cols).reset_index(drop=True)], axis=1)
 
-joblib.dump(model, 'fertilizer_model.pkl')
-joblib.dump(encoder, 'encoder.pkl')
-joblib.dump(categorical_cols.tolist(), 'categorical_cols.pkl')
-joblib.dump(X_final.columns.tolist(), 'model_columns.pkl')
+    model = RandomForestClassifier()
+    model.fit(X_final, y)
+
+    joblib.dump(model, MODEL_FILE)
+    joblib.dump(encoder, ENCODER_FILE)
+    joblib.dump(categorical_cols.tolist(), CATEGORICAL_COLS_FILE)
+    joblib.dump(X_final.columns.tolist(), MODEL_COLUMNS_FILE)
+    print("Model training complete.")
+
+if not all(os.path.exists(f) for f in [MODEL_FILE, ENCODER_FILE, CATEGORICAL_COLS_FILE, MODEL_COLUMNS_FILE]):
+    train_model()
 
 @app.route('/')
 def serve_react_app():
+    if not os.path.exists(os.path.join(app.static_folder, 'index.html')):
+        return "Frontend build not found. Please run 'npm run build' in the frontend directory.", 404
     return send_from_directory(app.static_folder, 'index.html')
 
 # Serve other routes to React (React Router support)
 @app.errorhandler(404)
 def not_found(e):
+    if request.path.startswith('/api'):
+        return jsonify({'error': 'Not found'}), 404
+    if not os.path.exists(os.path.join(app.static_folder, 'index.html')):
+        return "Frontend build not found. Please run 'npm run build' in the frontend directory.", 404
     return send_from_directory(app.static_folder, 'index.html')
 
-# Routes
-@app.route('/')
-def home():
-    return "Fertilizer Recommendation API is running!"
+# API Routes
+@app.route('/api/status')
+def status():
+    return jsonify({'status': 'running', 'message': 'Fertilizer Recommendation API is operational'})
 
 @app.route('/get-weather', methods=['POST'])
 def get_weather():

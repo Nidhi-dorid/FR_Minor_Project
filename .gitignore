@@ -11,3 +11,7 @@ build/
 # Environment and OS
 .env
 .DS_Store
+.venv/
+users.db
+flask_session/
+*.pkl
